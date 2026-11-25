@@ -4,6 +4,7 @@
 // and reports its exact wait status over a pipe.
 //
 // usage: srt-spawn STATUSFD:KEEP FILE ARGV0 [ARG...]
+// TELOSNEX DEVIATION: the embedding API may insert "" --setsid before FILE.
 // pipe protocol: 8 bytes {int32 pid, int32 errno} once the command has been
 // exec'd (errno != 0: exec failed, pid 0), then 4 bytes {int32 wait status}.
 #include <dirent.h>
@@ -39,6 +40,10 @@ static void write_all(int fd, const void *buf, size_t n) {
 
 int main(int argc, char **argv) {
   if (argc < 4) return 125;
+  // TELOSNEX DEVIATION: opt in to a new session for the real command, not
+  // this status relay; older helpers would fail to exec the empty filename.
+  int new_session = argc >= 6 && !argv[2][0] && !strcmp(argv[3], "--setsid");
+  int file_arg = new_session ? 4 : 2;
   int sfd = atoi(argv[1]);
   fcntl(sfd, F_SETFD, FD_CLOEXEC);
   // Only descriptors 0..KEEP-1 (the stdio slots) reach the command, as in
@@ -96,7 +101,10 @@ int main(int argc, char **argv) {
   if (pid == 0) {
     sigprocmask(SIG_SETMASK, &old, NULL);
     close(ep[0]);
-    execve(argv[2], argv + 3, environ);
+    // TELOSNEX DEVIATION: set up the command's process group before exec
+    // and report failure through the same channel as an exec error.
+    if (!new_session || setsid() >= 0)
+      execve(argv[file_arg], argv + file_arg + 1, environ);
     int e = errno;
     write_all(ep[1], &e, sizeof e);
     _exit(127);
