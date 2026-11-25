@@ -101,6 +101,8 @@ import 'sandbox_config.dart'
         CredentialsConfig,
         FilesystemConfig,
         FilesystemPathEntry,
+        // TELOSNEX DEVIATION: The command temp directory is a literal grant.
+        FilesystemPathLiteral,
         FilesystemPathSpelling,
         GitConfig,
         IgnoreViolationsConfig,
@@ -119,6 +121,8 @@ import 'sandbox_schemas.dart'
 import 'sandbox_utils.dart'
     show
         GlobWalkListings,
+        // TELOSNEX DEVIATION: Keep devices when omitting directory defaults.
+        SANDBOX_DEVICE_WRITE_PATHS,
         Steps,
         attributionKeyFor,
         containsGlobChars,
@@ -2907,6 +2911,19 @@ class WrapWithSandboxOptions {
 class PartialSandboxRuntimeConfig {
   final NetworkConfig? network;
   final FilesystemConfig? filesystem;
+
+  // TELOSNEX DEVIATION: Embedders can make a command's write policy exact.
+  /// When true, omit the shared temp and home convenience write grants on
+  /// macOS/Linux, keeping the device/stdio exceptions and explicit grants.
+  /// Without [temporaryDirectory], do not override the inherited TMPDIR.
+  final bool? omitDefaultWritablePaths;
+
+  // TELOSNEX DEVIATION: Embedders can grant a private temp directory per command.
+  /// Existing absolute directory to grant as a literal write path and export
+  /// as TMPDIR on macOS/Linux, even without filesystem or network restrictions.
+  /// The caller creates it before wrapping and removes it after execution.
+  final String? temporaryDirectory;
+
   final CredentialsConfig? credentials;
   final IgnoreViolationsConfig? ignoreViolations;
   final bool? enableWeakerNestedSandbox;
@@ -2933,6 +2950,9 @@ class PartialSandboxRuntimeConfig {
   const PartialSandboxRuntimeConfig({
     this.network,
     this.filesystem,
+    // TELOSNEX DEVIATION: Accept these options only in per-command policy.
+    this.omitDefaultWritablePaths,
+    this.temporaryDirectory,
     this.credentials,
     this.ignoreViolations,
     this.enableWeakerNestedSandbox,
@@ -3124,6 +3144,24 @@ Future<String> _wrapWithSandboxOnce(
       ? (customConfig!.filesystem!.disabled ?? false)
       : (_config?.filesystem.disabled ?? false);
 
+  // TELOSNEX DEVIATION: Use the caller's existing directory as TMPDIR even
+  // without filesystem policy. Validate only on platforms that consume it.
+  final isPosixSandbox = platform == 'macos' || platform == 'linux';
+  final temporaryDirectory = isPosixSandbox
+      ? customConfig?.temporaryDirectory
+      : null;
+  if (temporaryDirectory != null &&
+      (!temporaryDirectory.startsWith('/') ||
+          !fs.statSync(temporaryDirectory).isDirectory())) {
+    throw ArgumentError.value(
+      temporaryDirectory,
+      'temporaryDirectory',
+      'must be an existing absolute directory',
+    );
+  }
+  final omitDefaultWritablePaths =
+      isPosixSandbox && customConfig?.omitDefaultWritablePaths == true;
+
   // Credential env handling is independent of filesystem policy: unsetEnvVars /
   // setEnvVars must be applied even when fsDisabled (the credential file
   // deny-reads are dropped, but env scrubbing still happens).
@@ -3145,21 +3183,34 @@ Future<String> _wrapWithSandboxOnce(
           const [],
     );
     final writeLiterals = literalWriteLists(
-      customConfig?.filesystem?.allowWrite ?? _config?.filesystem.allowWrite,
+      // TELOSNEX DEVIATION: Apply the same rules as an explicit literal write
+      // grant (including existing deny precedence), never as a glob.
+      temporaryDirectory == null
+          ? customConfig?.filesystem?.allowWrite ??
+                _config?.filesystem.allowWrite
+          : [
+              ...?(customConfig?.filesystem?.allowWrite ??
+                  _config?.filesystem.allowWrite),
+              FilesystemPathLiteral(temporaryDirectory),
+            ],
       customConfig?.filesystem?.denyWrite ?? _config?.filesystem.denyWrite,
     );
     writeConfig = FsWriteRestrictionConfig(
       allowOnly: [
-        ..._defaultWritePathsUnder(
-          denyRead:
-              customConfig?.filesystem?.denyRead ??
-              _config?.filesystem.denyRead ??
-              const [],
-          allowRead:
-              customConfig?.filesystem?.allowRead ??
-              _config?.filesystem.allowRead,
-          credentials: customConfig?.credentials ?? _config?.credentials,
-        ),
+        // TELOSNEX DEVIATION: Only keep device/stdio defaults when requested.
+        if (omitDefaultWritablePaths)
+          ...SANDBOX_DEVICE_WRITE_PATHS
+        else
+          ..._defaultWritePathsUnder(
+            denyRead:
+                customConfig?.filesystem?.denyRead ??
+                _config?.filesystem.denyRead ??
+                const [],
+            allowRead:
+                customConfig?.filesystem?.allowRead ??
+                _config?.filesystem.allowRead,
+            credentials: customConfig?.credentials ?? _config?.credentials,
+          ),
         ...userAllowWrite,
       ],
       denyWithinAllow: _stripWriteGlobs(
@@ -3354,6 +3405,9 @@ Future<String> _wrapWithSandboxOnce(
           enableWeakerNetworkIsolation: _getEnableWeakerNetworkIsolation(),
           allowAppleEvents: _getAllowAppleEvents(),
           binShell: binShell,
+          // TELOSNEX DEVIATION: Give the wrapper the command's TMPDIR choice.
+          temporaryDirectory: temporaryDirectory,
+          skipDefaultTmpdir: omitDefaultWritablePaths,
         ),
       );
 
@@ -3396,6 +3450,9 @@ Future<String> _wrapWithSandboxOnce(
           socatPath: _config?.socatPath,
           observeSocketPath: _linuxMonitor?.observeSocketPath,
           abortSignal: abortSignal,
+          // TELOSNEX DEVIATION: Give the wrapper the command's TMPDIR choice.
+          temporaryDirectory: temporaryDirectory,
+          skipDefaultTmpdir: omitDefaultWritablePaths,
         ),
       ).catchError((Object err) {
         // It awaits once more, for its scan: see the invariant above.

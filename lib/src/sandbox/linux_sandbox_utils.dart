@@ -145,6 +145,10 @@ class LinuxSandboxParams {
   /** Abort signal to cancel the ripgrep scan */
   final AbortSignal? abortSignal;
 
+  // TELOSNEX DEVIATION: Per-command TMPDIR and control of the legacy fallback.
+  final String? temporaryDirectory;
+  final bool? skipDefaultTmpdir;
+
   const LinuxSandboxParams({
     required this.command,
     this.commandId,
@@ -175,6 +179,9 @@ class LinuxSandboxParams {
     this.socatPath,
     this.observeSocketPath,
     this.abortSignal,
+    // TELOSNEX DEVIATION: Accept the command's choice from the manager.
+    this.temporaryDirectory,
+    this.skipDefaultTmpdir,
   });
 }
 
@@ -3731,6 +3738,8 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
   final allowNestedUserNamespaces = params.allowNestedUserNamespaces;
   final allowAllUnixSockets = params.allowAllUnixSockets;
   final binShell = params.binShell;
+  // TELOSNEX DEVIATION: Use a private TMPDIR independent of proxying.
+  final temporaryDirectory = params.temporaryDirectory;
   final ripgrepConfig = params.ripgrepConfig ?? RipgrepConfig(command: 'rg');
   final mandatoryDenySearchDepth =
       params.mandatoryDenySearchDepth ?? _DEFAULT_MANDATORY_DENY_SEARCH_DEPTH;
@@ -3766,7 +3775,17 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
       !hasWriteRestrictions &&
       !hasEnvRestrictions &&
       !hasGitConfig) {
-    return command;
+    // TELOSNEX DEVIATION: Set TMPDIR even for unrestricted commands, without
+    // imposing a sandbox that upstream would not have imposed.
+    return temporaryDirectory == null
+        ? command
+        : quote([
+            'env',
+            'TMPDIR=$temporaryDirectory',
+            binShell != null && binShell.isNotEmpty ? binShell : 'bash',
+            '-c',
+            command,
+          ]);
   }
 
   // Mark this sandbox invocation as active. cleanupBwrapMountPoints() will
@@ -3918,7 +3937,11 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
           1080, // Internal SOCKS listener port
           caCertPath,
           proxyAuthToken,
-          writeConfig == null,
+          // TELOSNEX DEVIATION: Don't set the legacy shared TMPDIR when opted out
+          // or when the command has its own temp directory.
+          writeConfig == null ||
+              params.skipDefaultTmpdir == true ||
+              temporaryDirectory != null,
           attributionKey,
         );
         bwrapArgs.addAll(
@@ -3961,6 +3984,13 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
         }
       }
       // If no sockets provided, network is completely blocked (--unshare-net without proxy)
+    }
+
+    // TELOSNEX DEVIATION: Set the command's TMPDIR whether or not proxy or
+    // network isolation is active. Like the old proxy TMPDIR, it wins over
+    // credential env overlays.
+    if (temporaryDirectory != null) {
+      bwrapArgs.addAll(['--setenv', 'TMPDIR', temporaryDirectory]);
     }
 
     // ========== FILESYSTEM RESTRICTIONS ==========

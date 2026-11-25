@@ -491,15 +491,22 @@ String normalizePathForSandbox(String pathPattern, {bool literal = false}) {
   return _warnIfParentRefUnfolded(normalizedPath);
 }
 
-/// What the sandbox itself needs writable: the child's stdio and the TMPDIR it
-/// is handed (generateProxyEnvVars). Kept whatever is read-denied.
-const List<String> _SANDBOX_OWN_WRITE_PATHS = [
+// TELOSNEX DEVIATION: Keep the device/stdio exceptions when a command omits
+// the shared temp and home convenience directories.
+const List<String> SANDBOX_DEVICE_WRITE_PATHS = [
   '/dev/stdout',
   '/dev/stderr',
   '/dev/null',
   '/dev/tty',
   '/dev/dtracehelper',
   '/dev/autofs_nowait',
+];
+
+/// What the sandbox itself needs writable: the child's stdio and the TMPDIR it
+/// is handed (generateProxyEnvVars). Kept whatever is read-denied.
+const List<String> _SANDBOX_OWN_WRITE_PATHS = [
+  // TELOSNEX DEVIATION: Reuse the device exceptions in the upstream defaults.
+  ...SANDBOX_DEVICE_WRITE_PATHS,
   '/tmp/claude',
   '/private/tmp/claude',
 ];
