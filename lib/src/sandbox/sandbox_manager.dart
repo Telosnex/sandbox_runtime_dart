@@ -2964,6 +2964,12 @@ class PartialSandboxRuntimeConfig {
   final WindowsConfig? windows;
   final GitConfig? git;
 
+  // TELOSNEX DEVIATION: Opt out of the session proxy per command.
+  /// Allow direct IP network access on macOS/Linux, without the SRT proxy.
+  /// Leaves filesystem policy and inherited environment in place. Linux
+  /// still blocks Unix sockets by default. Windows rejects true.
+  final bool? directNetwork;
+
   const PartialSandboxRuntimeConfig({
     this.network,
     this.filesystem,
@@ -2987,6 +2993,8 @@ class PartialSandboxRuntimeConfig {
     this.javaAgentJarPath,
     this.windows,
     this.git,
+    // TELOSNEX DEVIATION: Accept this only in per-command policy.
+    this.directNetwork,
   });
 }
 
@@ -3099,6 +3107,9 @@ Future<String> _wrapWithSandboxOnce(
   WrapWithSandboxOptions? options,
 ]) async {
   final platform = getPlatform();
+  // TELOSNEX DEVIATION: Direct networking is a command-local macOS/Linux option.
+  final directNetwork = customConfig?.directNetwork == true;
+  if (platform == 'windows') _assertNoWindowsDirectNetwork(customConfig);
   final commandId = options?.commandId;
   registerCommandText(command, options);
   final startedWith = _config;
@@ -3338,9 +3349,12 @@ Future<String> _wrapWithSandboxOnce(
   // 1. customConfig has network.allowedDomains defined (even if empty array = block all)
   // 2. OR config has network.allowedDomains defined (even if empty array = block all)
   // An empty allowedDomains array means "no domains allowed" = block all network access
+  // TELOSNEX DEVIATION: An opt-in command skips isolation and proxy wiring
+  // without turning off the session proxy for any other command.
   final hasNetworkConfig =
-      customConfig?.network?.allowedDomains != null ||
-      _config?.network.allowedDomains != null;
+      !directNetwork &&
+      (customConfig?.network?.allowedDomains != null ||
+          _config?.network.allowedDomains != null);
 
   // Network RESTRICTION is needed whenever network config is specified
   // This includes empty allowedDomains which means "block all network"
@@ -3403,7 +3417,8 @@ Future<String> _wrapWithSandboxOnce(
           httpProxyPort: needsNetworkProxy ? _getProxyPort() : null,
           socksProxyPort: needsNetworkProxy ? _getSocksProxyPort() : null,
           proxyAuthToken: needsNetworkProxy ? _proxyAuthToken : null,
-          caCertPath: _mitmCA?.trustBundlePath,
+          // TELOSNEX DEVIATION: No proxy CA env override for direct commands.
+          caCertPath: directNetwork ? null : _mitmCA?.trustBundlePath,
           javaAgentJarPath: needsNetworkProxy ? _javaAgentJarPath : null,
           readConfig: readConfig,
           writeConfig: writeConfig,
@@ -3530,6 +3545,8 @@ Future<({List<String> argv, Map<String, String?> env})> _wrapWithSandboxArgv(
   final platform = getPlatform();
 
   if (platform == 'windows') {
+    // TELOSNEX DEVIATION: Refuse an unsupported direct-network request.
+    _assertNoWindowsDirectNetwork(customConfig);
     // The MXC SDK starts the process itself, so there is no argv for
     // the caller to spawn.
     if (_windowsMxcState != null)
@@ -3721,6 +3738,16 @@ Future<({List<String> argv, Map<String, String?> env})> _wrapWithSandboxArgv(
   return (argv: [shell, '-c', wrapped], env: process.env);
 }
 
+// TELOSNEX DEVIATION: Neither Windows backend can honor direct network.
+void _assertNoWindowsDirectNetwork(PartialSandboxRuntimeConfig? config) {
+  if (config?.directNetwork == true) {
+    throw WindowsSandboxError(
+      'backend_unsupported',
+      'directNetwork is not supported on Windows',
+    );
+  }
+}
+
 /**
  * Settings the mxc backend cannot honour, refused rather than run with
  * a different meaning than on the other backends.
@@ -3831,7 +3858,11 @@ Future<SandboxedProcess> _spawnSandboxed(
 ]) async {
   options ??= const SpawnSandboxedOptions();
   final st = _windowsMxcState;
-  if (getPlatform() != 'windows' || st == null)
+  // TELOSNEX DEVIATION: MXC never runs a command requesting direct network.
+  final platform = getPlatform();
+  if (platform == 'windows')
+    _assertNoWindowsDirectNetwork(options.customConfig);
+  if (platform != 'windows' || st == null)
     throw NodeException(
       "spawnSandboxed() needs an initialized windows.backend 'mxc' "
       'session; other backends use wrapWithSandboxArgv().',
