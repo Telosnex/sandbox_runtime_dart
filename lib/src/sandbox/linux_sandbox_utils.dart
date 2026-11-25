@@ -148,6 +148,8 @@ class LinuxSandboxParams {
   // TELOSNEX DEVIATION: Per-command TMPDIR and control of the legacy fallback.
   final String? temporaryDirectory;
   final bool? skipDefaultTmpdir;
+  // TELOSNEX DEVIATION: an embedder can own mount-point cleanup on exit.
+  final bool registerProcessHandlers;
 
   const LinuxSandboxParams({
     required this.command,
@@ -182,6 +184,8 @@ class LinuxSandboxParams {
     // TELOSNEX DEVIATION: Accept the command's choice from the manager.
     this.temporaryDirectory,
     this.skipDefaultTmpdir,
+    // TELOSNEX DEVIATION: standalone wraps retain upstream exit cleanup.
+    this.registerProcessHandlers = true,
   });
 }
 
@@ -1498,9 +1502,8 @@ String? _probeBwrapVersion(String bwrap) {
     },
   );
   final version = probe.error == null && probe.status == 0
-      ? (RegExp(
-          r'\d+(?:\.\d+)*',
-        ).firstMatch((probe.stdout as String?) ?? '')?[0])
+      ? (RegExp(r'\d+(?:\.\d+)*')
+            .firstMatch((probe.stdout as String?) ?? '')?[0])
       : null;
   _bwrapVersions[bwrap] = version;
   return version;
@@ -2301,6 +2304,8 @@ Future<({List<String> args, int mandatoryDenyArgs})> _generateFilesystemArgs(
   int mandatoryDenySearchDepth = _DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   bool allowGitConfig = false,
   AbortSignal? abortSignal,
+  // TELOSNEX DEVIATION: use the embedder's exit-handler preference.
+  bool registerProcessHandlers = true,
 ]) async {
   ripgrepConfig ??= RipgrepConfig(command: 'rg');
   final args = <String>[];
@@ -3079,7 +3084,9 @@ Future<({List<String> args, int mandatoryDenyArgs})> _generateFilesystemArgs(
         // like a mount point may be the caller's own, or that of another
         // process's sandbox still running, whose deny goes with it.
         _bwrapMountPoints.add(dest);
-        _registerExitCleanupHandler();
+        // TELOSNEX DEVIATION: still track the placeholder for explicit
+        // cleanup, but leave exit alone when the embedder owns shutdown.
+        if (registerProcessHandlers) _registerExitCleanupHandler();
       }
       return (dest: dest, kind: kind);
     }
@@ -3820,8 +3827,7 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
 
       if (applySeccompPrefix == null || applySeccompPrefix.isEmpty) {
         logForDebugging(
-          '[Sandbox Linux] apply-seccomp binary not available - unix socket blocking disabled. ' +
-              'Install @anthropic-ai/sandbox-runtime globally for full protection.',
+          '[Sandbox Linux] apply-seccomp binary not available - unix socket blocking disabled. ' + 'Install @anthropic-ai/sandbox-runtime globally for full protection.',
           level: 'warn',
         );
       } else {
@@ -3909,14 +3915,12 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
         // Verify socket files still exist before trying to bind them
         if (!fs.existsSync(httpSocketPath)) {
           throw NodeException(
-            'Linux HTTP bridge socket does not exist: $httpSocketPath. ' +
-                'The bridge process may have died. Try reinitializing the sandbox.',
+            'Linux HTTP bridge socket does not exist: $httpSocketPath. ' + 'The bridge process may have died. Try reinitializing the sandbox.',
           );
         }
         if (!fs.existsSync(socksSocketPath)) {
           throw NodeException(
-            'Linux SOCKS bridge socket does not exist: $socksSocketPath. ' +
-                'The bridge process may have died. Try reinitializing the sandbox.',
+            'Linux SOCKS bridge socket does not exist: $socksSocketPath. ' + 'The bridge process may have died. Try reinitializing the sandbox.',
           );
         }
 
@@ -4003,6 +4007,8 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
       mandatoryDenySearchDepth,
       allowGitConfig,
       abortSignal,
+      // TELOSNEX DEVIATION: carry the opt-out through to mount planning.
+      params.registerProcessHandlers,
     );
     final mountsStart = bwrapArgs.length;
     bwrapArgs.addAll(fsArgs);
