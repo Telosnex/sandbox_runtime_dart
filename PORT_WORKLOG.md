@@ -57,6 +57,17 @@ Suspected upstream bugs, ported as they are:
 Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
 `test/deviations/`.
 
+- `SandboxManager.wrapWithSandbox` / `wrapWithSandboxArgv`: upstream always
+  uses the session proxy when network config is present. On macOS and Linux,
+  `PartialSandboxRuntimeConfig.directNetwork: true` in `customConfig` gives
+  just that command direct IP access without injecting proxy environment
+  variables or starting Linux proxy relays. The filesystem and credential
+  rules still apply, and inherited proxy variables are not stripped.
+  Omitted or false keeps upstream behavior. Linux retains upstream's
+  Unix-socket seccomp filter unless `allowAllUnixSockets` is enabled, and
+  retains the helper's filesystem protections. Windows (including MXC)
+  rejects true with `backend_unsupported`. Telosnex may propose this upstream.
+
 - `mxc_sandbox_utils.dart`, `buildMxcRequest`: upstream sends every
   `denyWrite` path as an MXC denied path, which also blocks reads. Here an
   existing `denyWrite` path outside every `denyRead` is a read-only path:
