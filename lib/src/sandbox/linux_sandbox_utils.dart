@@ -145,6 +145,9 @@ class LinuxSandboxParams {
   /** Abort signal to cancel the ripgrep scan */
   final AbortSignal? abortSignal;
 
+  // TELOSNEX DEVIATION: an embedder can own mount-point cleanup on exit.
+  final bool registerProcessHandlers;
+
   const LinuxSandboxParams({
     required this.command,
     this.commandId,
@@ -175,6 +178,8 @@ class LinuxSandboxParams {
     this.socatPath,
     this.observeSocketPath,
     this.abortSignal,
+    // TELOSNEX DEVIATION: standalone wraps retain upstream exit cleanup.
+    this.registerProcessHandlers = true,
   });
 }
 
@@ -2287,6 +2292,8 @@ Future<({List<String> args, int mandatoryDenyArgs})> _generateFilesystemArgs(
   int mandatoryDenySearchDepth = _DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   bool allowGitConfig = false,
   AbortSignal? abortSignal,
+  // TELOSNEX DEVIATION: use the embedder's exit-handler preference.
+  bool registerProcessHandlers = true,
 ]) async {
   ripgrepConfig ??= RipgrepConfig(command: 'rg');
   final args = <String>[];
@@ -3058,7 +3065,9 @@ Future<({List<String> args, int mandatoryDenyArgs})> _generateFilesystemArgs(
         // like a mount point may be the caller's own, or that of another
         // process's sandbox still running, whose deny goes with it.
         _bwrapMountPoints.add(dest);
-        _registerExitCleanupHandler();
+        // TELOSNEX DEVIATION: still track the placeholder for explicit
+        // cleanup, but leave exit alone when the embedder owns shutdown.
+        if (registerProcessHandlers) _registerExitCleanupHandler();
       }
       return (dest: dest, kind: kind);
     }
@@ -3959,6 +3968,8 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
       mandatoryDenySearchDepth,
       allowGitConfig,
       abortSignal,
+      // TELOSNEX DEVIATION: carry the opt-out through to mount planning.
+      params.registerProcessHandlers,
     );
     final mountsStart = bwrapArgs.length;
     bwrapArgs.addAll(fsArgs);

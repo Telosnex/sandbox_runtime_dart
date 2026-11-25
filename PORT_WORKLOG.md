@@ -65,6 +65,17 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   git. A missing path stays denied, because a read-only path does not stop
   its creation. Telosnex may propose this upstream.
 
+- `sandbox_manager.dart`, `linux_sandbox_utils.dart`: upstream registers
+  `SIGINT`, `SIGTERM`, and `exit` cleanup handlers during initialization and
+  registers another `exit` cleanup handler when a Linux wrap tracks a bwrap
+  mount point. With `SandboxInitializeOptions(registerProcessHandlers: false)`,
+  neither site registers handlers. This lets the embedder stop live commands
+  before tearing down the sandbox. Pass the option from the first initialize;
+  it does not remove handlers already registered. The embedder must call
+  `cleanupAfterCommand()` after each command ends and await `reset()` at
+  shutdown after stopping all commands. The default retains upstream behavior.
+  Telosnex may propose this upstream.
+
 ## State (2026-10-13, after the test fidelity pass)
 
 `main` builds and passes from a clean clone on macOS (524 pass, 38 skip) and

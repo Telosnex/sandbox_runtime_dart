@@ -182,6 +182,9 @@ int _initializeGeneration = 0;
 // Kills the profile grant a refresh is running, at reset().
 AbortController? _windowsProfileGrantAbort;
 bool _cleanupRegistered = false;
+// TELOSNEX DEVIATION: carry the embedder's process-handler preference to
+// Linux wrapping, which can register its own exit cleanup.
+bool _registerProcessHandlers = true;
 bool _ownInstallLogged = false;
 void Function()? _logMonitorShutdown;
 LinuxViolationMonitor? _linuxMonitor;
@@ -1285,10 +1288,18 @@ class SandboxInitializeOptions {
    * and `@microsoft/mxc-sdk` is not resolved.
    */
   final MxcSdk? windowsMxcSdk;
+  // TELOSNEX DEVIATION: upstream always installs process cleanup handlers.
+  /// Defaults to true. Pass false from the first initialization if the
+  /// embedder owns shutdown; it does not unregister previously added handlers.
+  /// Call [ISandboxManager.cleanupAfterCommand] after each command ends and
+  /// await [ISandboxManager.reset] at shutdown after stopping all commands.
+  final bool registerProcessHandlers;
   const SandboxInitializeOptions({
     this.dangerouslyAllowReadOfProfileExclusions,
     this.onWindowsProfileGrantProgress,
     this.windowsMxcSdk,
+    // TELOSNEX DEVIATION: opt out explicitly to retain upstream by default.
+    this.registerProcessHandlers = true,
   });
 }
 
@@ -1361,6 +1372,9 @@ List<Object?> _initializeArgsForComparison(List<Object?> args) {
             options.dangerouslyAllowReadOfProfileExclusions,
         'onWindowsProfileGrantProgress': options.onWindowsProfileGrantProgress,
         'windowsMxcSdk': options.windowsMxcSdk,
+        // TELOSNEX DEVIATION: do not coalesce in-flight calls that disagree
+        // about who owns process shutdown.
+        if (!options.registerProcessHandlers) 'registerProcessHandlers': false,
       },
   ];
 }
@@ -1411,6 +1425,8 @@ Future<void> _initializeSteps(
   // Store config for use by other functions
   _config = runtimeConfig;
   _configInstalls++;
+  // TELOSNEX DEVIATION: initialize and wrap use the same handler preference.
+  _registerProcessHandlers = options?.registerProcessHandlers ?? true;
 
   // Resolve parent/upstream proxy from config or HTTP_PROXY env before we
   // start our own listeners (which will later shadow those vars in the child).
@@ -1568,7 +1584,9 @@ Future<void> _initializeSteps(
   }
 
   // Register cleanup handlers first time
-  _registerCleanup();
+  // TELOSNEX DEVIATION: skip SIGINT, SIGTERM, and exit hooks when the embedder
+  // manages shutdown and needs to stop commands before reset tears down policy.
+  if (_registerProcessHandlers) _registerCleanup();
 
   // Windows: validate provisioning + filesystem config BEFORE any
   // sandboxed child can be spawned. Doing this at initialize() (not
@@ -3385,6 +3403,8 @@ Future<String> _wrapWithSandboxOnce(
           socatPath: _config?.socatPath,
           observeSocketPath: _linuxMonitor?.observeSocketPath,
           abortSignal: abortSignal,
+          // TELOSNEX DEVIATION: suppress Linux's additional exit hook too.
+          registerProcessHandlers: _registerProcessHandlers,
         ),
       ).catchError((Object err) {
         // It awaits once more, for its scan: see the invariant above.
