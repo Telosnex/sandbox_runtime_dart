@@ -60,9 +60,10 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
 - `SandboxManager.wrapWithSandbox` / `wrapWithSandboxArgv`: upstream always
   uses the session proxy when network config is present. On macOS and Linux,
   `PartialSandboxRuntimeConfig.directNetwork: true` in `customConfig` gives
-  just that command direct IP access without injecting proxy environment
-  variables or starting Linux proxy relays. The filesystem and credential
-  rules still apply, and inherited proxy variables are not stripped.
+  just that command direct IP access without injecting proxy or proxy-CA
+  environment variables or starting Linux proxy relays. The filesystem
+  and credential rules still apply, and inherited proxy and trust
+  settings are not stripped.
   Omitted or false keeps upstream behavior. On macOS, direct mode allows
   unrestricted IP traffic and applies the same `allowUnixSockets` and
   `allowAllUnixSockets` rules as proxy mode instead of allowing `network*`.

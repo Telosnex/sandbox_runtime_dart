@@ -8,9 +8,11 @@ import 'package:sandbox_runtime/src/node/process.dart' as process;
 import 'package:sandbox_runtime/src/sandbox/generate_seccomp_filter.dart'
     show getApplySeccompBinaryPath;
 import 'package:sandbox_runtime/src/sandbox/sandbox_config.dart'
-    show FilesystemPathLiteral;
+    show FilesystemPathLiteral, TlsTerminateConfig;
 import 'package:sandbox_runtime/src/sandbox/sandbox_manager.dart'
     show PartialSandboxRuntimeConfig;
+import 'package:sandbox_runtime/src/sandbox/sandbox_utils.dart'
+    show CA_TRUST_VARS;
 import 'package:sandbox_runtime/src/utils/shell_quote.dart' show quote;
 import 'package:sandbox_runtime/src/utils/which.dart' show whichSync;
 import 'package:test/test.dart';
@@ -69,6 +71,7 @@ void main() {
       NetworkConfig network = const NetworkConfig(
         allowedDomains: [],
         deniedDomains: [],
+        tlsTerminate: TlsTerminateConfig(),
       ),
     ]) => SandboxRuntimeConfig(
       network: network,
@@ -95,7 +98,22 @@ void main() {
       await fixtures.delete(recursive: true);
     });
 
-    Future<ProcessResult> run(String command, bool? directNetwork) async {
+    Map<String, String> launchEnvironment(
+      Map<String, String?> env, {
+      bool omitInheritedTrust = false,
+    }) => {
+      for (final MapEntry(:key, :value) in env.entries)
+        if (value != null &&
+            !proxyVars.contains(key) &&
+            !(omitInheritedTrust && CA_TRUST_VARS.contains(key)))
+          key: value,
+    };
+
+    Future<ProcessResult> run(
+      String command,
+      bool? directNetwork, {
+      bool omitInheritedTrust = false,
+    }) async {
       final wrapped = await SandboxManager.wrapWithSandboxArgv(
         command,
         shell,
@@ -116,10 +134,10 @@ void main() {
           wrapped.argv.first,
           wrapped.argv.skip(1).toList(),
           includeParentEnvironment: false,
-          environment: {
-            for (final MapEntry(:key, :value) in wrapped.env.entries)
-              if (value != null && !proxyVars.contains(key)) key: value,
-          },
+          environment: launchEnvironment(
+            wrapped.env,
+            omitInheritedTrust: omitInheritedTrust,
+          ),
         );
       } finally {
         SandboxManager.cleanupAfterCommand();
@@ -176,22 +194,56 @@ void main() {
       },
     );
 
+    test('injects proxy CA variables only into proxied commands', () async {
+      final ca = SandboxManager.getMitmCA();
+      expect(ca, isNotNull, reason: 'the session must have a proxy CA');
+      final command = [
+        for (final key in CA_TRUST_VARS)
+          'if printenv $key >/dev/null; then echo $key; fi',
+      ].join('\n');
+      final direct = await run(command, true, omitInheritedTrust: true);
+      final proxied = await run(command, null, omitInheritedTrust: true);
+      expect(direct.exitCode, 0, reason: '${direct.stderr}');
+      expect(direct.stdout, isEmpty);
+      expect(proxied.exitCode, 0, reason: '${proxied.stderr}');
+      expect((proxied.stdout as String).trim().split('\n'), CA_TRUST_VARS);
+    });
+
     test('reaches an external HTTPS host without the proxy', () async {
+      const hostname = 'example.com';
       final args = [
         ...curlArgs,
-        'https://example.com/',
+        'https://$hostname/',
         '--output',
         '/dev/null',
+        '--verbose',
       ];
-      final host = await Process.run(curl!, args);
+      // Keep the same inherited trust settings as the sandboxed curl. Use the
+      // same server IP as well: separate DNS lookups or Happy Eyeballs races
+      // can otherwise send the two requests to different CDN edges/chains.
+      final host = await Process.run(
+        curl!,
+        [...args, '--write-out', '%{remote_ip}'],
+        includeParentEnvironment: false,
+        environment: launchEnvironment(process.env),
+      );
       if (host.exitCode != 0) {
-        markTestSkipped(
-          'Host cannot reach example.com directly: ${host.stderr}',
-        );
+        markTestSkipped('Host cannot reach $hostname directly: ${host.stderr}');
         return;
       }
-      final result = await run(quote([curl, ...args]), true);
-      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final peer = InternetAddress(host.stdout as String);
+      final resolve = peer.type == InternetAddressType.IPv6
+          ? '$hostname:443:[${peer.address}]'
+          : '$hostname:443:${peer.address}';
+      final result = await run(
+        quote([curl, ...args, '--resolve', resolve]),
+        true,
+      );
+      expect(
+        result.exitCode,
+        0,
+        reason: 'Host curl:\n${host.stderr}\nSandbox curl:\n${result.stderr}',
+      );
     });
 
     test(
@@ -240,6 +292,7 @@ void main() {
             NetworkConfig(
               allowedDomains: [],
               deniedDomains: [],
+              tlsTerminate: const TlsTerminateConfig(),
               allowUnixSockets: switch (mode) {
                 'specific' => [socketPath],
                 'unrelated' => [path.join(base, 'other.sock')],
