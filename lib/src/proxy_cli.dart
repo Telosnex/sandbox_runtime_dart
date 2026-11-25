@@ -28,7 +28,7 @@ import 'sandbox/proxy_only.dart'
         startProxyOnly;
 
 // Dart has no JSON import: package.json's version, kept equal to pubspec.yaml.
-const _pkg = (version: '0.0.85');
+const _pkg = (version: '1.0.0');
 
 Future<void> runProxyCli(List<String> argv) async {
   // `--version` anywhere on the command line prints one line and does nothing

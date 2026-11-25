@@ -2,7 +2,7 @@ name: sandbox_runtime
 description: >-
   Dart port of Anthropic Sandbox Runtime (srt) for restricting child process
   filesystem and network access on macOS, Linux, and Windows with an MXC adapter.
-version: 0.0.85
+version: 1.0.0
 repository: https://github.com/Telosnex/sandbox_runtime_dart
 
 environment:
