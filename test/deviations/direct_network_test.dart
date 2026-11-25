@@ -247,6 +247,40 @@ void main() {
     });
 
     test(
+      'direct mode verifies TLS through the macOS system trust store',
+      skip: Platform.isMacOS ? false : 'macOS only',
+      () async {
+        // A CA file with one unrelated root makes Apple's curl fall back to
+        // the system trust store, as it does on hosts where /etc/ssl/cert.pem
+        // lacks a site's root. That fallback uses TrustEvaluationAgent.
+        const hostname = 'example.com';
+        final bundle = File('/etc/ssl/cert.pem').readAsStringSync();
+        final start = bundle.indexOf('-----BEGIN CERTIFICATE-----');
+        const end = '-----END CERTIFICATE-----';
+        final one = File(path.join(fixtures.path, 'one-root.pem'))
+          ..writeAsStringSync(
+            '${bundle.substring(start, bundle.indexOf(end, start) + end.length)}\n',
+          );
+        final args = [
+          '/usr/bin/curl',
+          ...curlArgs,
+          '--cacert',
+          one.path,
+          'https://$hostname/',
+          '--output',
+          '/dev/null',
+        ];
+        final host = await Process.run(args.first, args.sublist(1));
+        if (host.exitCode != 0) {
+          markTestSkipped('Host cannot verify $hostname: ${host.stderr}');
+          return;
+        }
+        final result = await run(quote(args), true);
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+      },
+    );
+
+    test(
       'direct mode can resolve an external hostname via the macOS resolver',
       () async {
         const resolver = '/usr/bin/dscacheutil';

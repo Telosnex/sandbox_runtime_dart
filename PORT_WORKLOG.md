@@ -69,7 +69,11 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   `allowAllUnixSockets` rules as proxy mode instead of allowing `network*`.
   The only extra Unix endpoint is outbound to the exact
   `/private/var/run/mDNSResponder` socket for system DNS resolution; it
-  gets no bind grant. Linux retains upstream's filesystem protections
+  gets no bind grant. Direct mode also allows Mach lookups of
+  `com.apple.trustd.agent` and `com.apple.TrustEvaluationAgent` so Go,
+  Swift, and Apple curl's keychain fallback can verify TLS. Upstream
+  gates trustd behind `enableWeakerNetworkIsolation` because it can leak
+  data past the proxy; a direct command has no proxy. Linux retains upstream's filesystem protections
   and Unix-socket seccomp filter. Seccomp cannot filter by path, so Linux
   ignores `allowUnixSockets` and `ssh-agent` is unavailable unless
   `allowAllUnixSockets` disables the filter (also as upstream, the filter

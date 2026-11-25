@@ -1120,6 +1120,18 @@ String _generateSandboxProfile({
       '; trustd.agent - needed for Go TLS certificate verification (weaker network isolation)',
       '(allow mach-lookup (global-name "com.apple.trustd.agent"))',
     ],
+    // TELOSNEX DEVIATION: Direct IP mode needs system certificate trust.
+    // Upstream denies these trust services because they can leak data past
+    // the network proxy. A direct command has no proxy to bypass. Without
+    // them, Go, Swift, and Apple curl's keychain fallback can't verify TLS.
+    if (directNetwork) ...[
+      '; Direct network: system TLS trust evaluation (Telosnex)',
+      '(allow mach-lookup',
+      if (!enableWeakerNetworkIsolation)
+        '  (global-name "com.apple.trustd.agent")',
+      '  (global-name "com.apple.TrustEvaluationAgent")',
+      ')',
+    ],
     if (allowAppleEvents) ...[
       '; Apple Events - opt-in; needed for open/osascript to talk to other apps (appleeventsd)',
       '(allow appleevent-send)',
