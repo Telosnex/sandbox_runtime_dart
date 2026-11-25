@@ -76,6 +76,16 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   violation monitor still uses its session-level cwd approximation.
   Telosnex may propose this upstream.
 
+- `spawnSafe` / `SafeProcess`: upstream leaves spawning to Node. Dart
+  embedders can spawn wrapped or plain argv with piped stdio and only fds
+  0, 1, and 2 at exec, with exact exit status. macOS uses the port's
+  `POSIX_SPAWN_CLOEXEC_DEFAULT`; Linux requires `srt-spawn` for the fd and
+  status guarantees and accepts an explicit `helperPath` for app bundles
+  before normal discovery. Opt-in `newSession` sets up a process group
+  before exec so apps can stop a command and its group. Existing
+  Node-shaped shim callers are unchanged. Telosnex may propose the public
+  launch contract upstream.
+
 ## State (2026-10-13, after the test fidelity pass)
 
 `main` builds and passes from a clean clone on macOS (524 pass, 38 skip) and

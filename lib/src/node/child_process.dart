@@ -253,12 +253,18 @@ Map<String, String> _envFor(Map<String, Object?> options) {
   };
 }
 
+// TELOSNEX DEVIATION: typed opt-in options for the Dart embedding API only.
+// Upstream (Node-shaped) callers retain the existing launch behavior.
+typedef _EmbeddingSpawn = ({bool newSession, String? helperPath});
+
 _Launched _launch(
   _Libc n,
   String command,
   List<String> args,
-  Map<String, Object?> options,
-) {
+  Map<String, Object?> options, [
+  // TELOSNEX DEVIATION: pass embedding options separately from Node options.
+  _EmbeddingSpawn? embedding,
+]) {
   final shell = options['shell'];
   if (shell != null && shell != false) {
     // Node joins command and args with spaces and runs them through the shell.
@@ -268,6 +274,24 @@ _Launched _launch(
   }
   if (options['detached'] == true) {
     throw UnsupportedError('child_process detached is not supported');
+  }
+  // TELOSNEX DEVIATION: require a Linux helper for embedding. The fallback
+  // may lose wait status to the VM, and on old libc it enumerates fds in the
+  // multithreaded parent (which can race opens). Explicit paths take precedence.
+  final String? embeddingHelper;
+  if (embedding != null && io.Platform.isLinux) {
+    final path = embedding.helperPath;
+    embeddingHelper = path == null
+        ? _spawnHelper()
+        : io.File(path).absolute.path;
+    if (embeddingHelper == null) {
+      throw UnsupportedError(
+        'spawnSafe on Linux requires srt-spawn (pass helperPath, set '
+        'SRT_SPAWN_HELPER, or build it with tool/build_spawn_helper.dart)',
+      );
+    }
+  } else {
+    embeddingHelper = null;
   }
   final specs = _stdioSpecs(options['stdio']);
   final cwd = options['cwd'] as String?;
@@ -328,6 +352,15 @@ _Launched _launch(
           // FD_CLOEXEC on the parent's end: no other child may inherit it.
           n.fcntl(parentEnd, 2, 1);
           n.fcntl(childEnd, 2, 1);
+          // TELOSNEX DEVIATION: make embedding stdin nonblocking so writing
+          // from an IOSink cannot block this isolate's output readers.
+          if (embedding != null && i == 0) {
+            final flags = n.fcntl(parentEnd, 3, 0); // F_GETFL
+            final nonblock = io.Platform.isMacOS ? 0x4 : 0x800; // O_NONBLOCK
+            if (flags < 0 || n.fcntl(parentEnd, 4, flags | nonblock) < 0) {
+              throw _LaunchError(codeForErrno(n.errno));
+            }
+          }
           n.faDup2(actions, dupHigh(childEnd), i);
         } else if (spec == 'ignore') {
           n.faOpen(
@@ -368,10 +401,20 @@ _Launched _launch(
       // macOS: POSIX_SPAWN_CLOEXEC_DEFAULT (0x4000), and
       // POSIX_SPAWN_START_SUSPENDED (0x0080) so the exit watch is in place
       // before the child can run and exit (see _ExitWatcher).
-      n.attrFlags(
+      // TELOSNEX DEVIATION: request POSIX_SPAWN_SETSID (0x0400) on macOS
+      // for an opt-in embedding session. Linux does setsid in the helper's
+      // child, so the pid returned to the caller is the group leader.
+      final attrResult = n.attrFlags(
         attr,
-        0x04 | 0x08 | (io.Platform.isMacOS ? 0x4000 | 0x0080 : 0),
+        0x04 |
+            0x08 |
+            (io.Platform.isMacOS
+                ? 0x4000 | 0x0080 | (embedding?.newSession == true ? 0x0400 : 0)
+                : 0),
       );
+      if (embedding != null && attrResult != 0) {
+        throw _LaunchError(codeForErrno(attrResult));
+      }
 
       final argv = arena<Pointer<Utf8>>(args.length + 2);
       argv[0] = ((options['argv0'] as String?) ?? command).toNativeUtf8(
@@ -396,7 +439,9 @@ _Launched _launch(
       var spawnFile = file;
       var spawnArgv = argv;
       var statusRead = -1, statusWrite = -1;
-      final helper = _spawnHelper();
+      // TELOSNEX DEVIATION: honor the embedding helperPath without changing
+      // the cached default discovery or the helper-less paths for Node callers.
+      final helper = embeddingHelper ?? _spawnHelper();
       if (helper == null && io.Platform.isLinux) {
         // Only the stdio slots reach the child, as in Node: the VM's own
         // descriptors are not all close-on-exec.
@@ -447,6 +492,9 @@ _Launched _launch(
         final hargs = [
           helper,
           '$statusWrite:${specs.length}',
+          // TELOSNEX DEVIATION: request setsid before exec. An older helper
+          // sees the empty filename and fails instead of launching ungrouped.
+          if (embedding?.newSession == true) ...['', '--setsid'],
           file,
           ...List.generate(args.length + 1, (i) => argv[i].toDartString()),
         ];
@@ -1032,6 +1080,57 @@ class ChildStdin {
   void close() => end();
 }
 
+// TELOSNEX DEVIATION: adapt an embedding-only nonblocking pipe to an
+// IOSink. This leaves Node's synchronous ChildStdin.write/end unchanged.
+io.IOSink embeddingStdin(ChildStdin pipe) =>
+    io.IOSink(_EmbeddingStdinConsumer(pipe));
+
+class _EmbeddingStdinConsumer implements StreamConsumer<List<int>> {
+  _EmbeddingStdinConsumer(this._pipe);
+  final ChildStdin _pipe;
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    try {
+      await for (final bytes in stream) {
+        if (bytes.isEmpty) continue;
+        final buf = calloc<Uint8>(bytes.length);
+        try {
+          buf.asTypedList(bytes.length).setAll(0, bytes);
+          var offset = 0;
+          while (offset < bytes.length) {
+            final fd = _pipe._fd;
+            if (fd < 0) throw StateError('Child stdin is closed');
+            final written = _pipe._native.write(
+              fd,
+              buf + offset,
+              bytes.length - offset,
+            );
+            if (written > 0) {
+              offset += written;
+            } else {
+              final code = codeForErrno(_pipe._native.errno);
+              if (code == 'EINTR') continue;
+              if (code != 'EAGAIN') {
+                throw NodeError('write $code', code: code, syscall: 'write');
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+            }
+          }
+        } finally {
+          calloc.free(buf);
+        }
+      }
+    } on Object {
+      _pipe.end();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> close() async => _pipe.end();
+}
+
 /// The parent end of a 'pipe' stdio slot beyond 2: a socketpair end that is
 /// a [net.NodeSocket] (a Duplex) and a [ChildStdin] (`write`, `end`).
 class _ExtraStdio extends net.NodeSocket implements ChildStdin {
@@ -1095,6 +1194,26 @@ ChildProcess spawn(
   String command, [
   List<String> args = const [],
   Map<String, Object?> options = const {},
+]) => _spawn(command, args, options);
+
+// TELOSNEX DEVIATION: the public embedding API uses the same implementation
+// and wait watcher as Node spawn, with opt-in isolation/IO settings only.
+ChildProcess spawnForEmbedding(
+  String command,
+  List<String> args,
+  Map<String, Object?> options, {
+  required bool newSession,
+  required String? helperPath,
+}) => _spawn(command, args, options, (
+  newSession: newSession,
+  helperPath: helperPath,
+));
+
+ChildProcess _spawn(
+  String command,
+  List<String> args,
+  Map<String, Object?> options, [
+  _EmbeddingSpawn? embedding,
 ]) {
   final child = ChildProcess._();
   final native = _native;
@@ -1104,7 +1223,8 @@ ChildProcess spawn(
   }
   _Launched launched;
   try {
-    launched = _launch(native, command, args, options);
+    // TELOSNEX DEVIATION: only spawnForEmbedding supplies embedding settings.
+    launched = _launch(native, command, args, options, embedding);
   } on _LaunchError catch (error) {
     final err = _spawnError('spawn', error.code, command, args);
     Timer.run(() {
