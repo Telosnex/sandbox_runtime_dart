@@ -1502,8 +1502,9 @@ String? _probeBwrapVersion(String bwrap) {
     },
   );
   final version = probe.error == null && probe.status == 0
-      ? (RegExp(r'\d+(?:\.\d+)*')
-            .firstMatch((probe.stdout as String?) ?? '')?[0])
+      ? (RegExp(
+          r'\d+(?:\.\d+)*',
+        ).firstMatch((probe.stdout as String?) ?? '')?[0])
       : null;
   _bwrapVersions[bwrap] = version;
   return version;
@@ -3827,7 +3828,8 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
 
       if (applySeccompPrefix == null || applySeccompPrefix.isEmpty) {
         logForDebugging(
-          '[Sandbox Linux] apply-seccomp binary not available - unix socket blocking disabled. ' + 'Install @anthropic-ai/sandbox-runtime globally for full protection.',
+          '[Sandbox Linux] apply-seccomp binary not available - unix socket blocking disabled. ' +
+              'Install @anthropic-ai/sandbox-runtime globally for full protection.',
           level: 'warn',
         );
       } else {
@@ -3915,12 +3917,14 @@ Future<String> wrapCommandWithSandboxLinux(LinuxSandboxParams params) async {
         // Verify socket files still exist before trying to bind them
         if (!fs.existsSync(httpSocketPath)) {
           throw NodeException(
-            'Linux HTTP bridge socket does not exist: $httpSocketPath. ' + 'The bridge process may have died. Try reinitializing the sandbox.',
+            'Linux HTTP bridge socket does not exist: $httpSocketPath. ' +
+                'The bridge process may have died. Try reinitializing the sandbox.',
           );
         }
         if (!fs.existsSync(socksSocketPath)) {
           throw NodeException(
-            'Linux SOCKS bridge socket does not exist: $socksSocketPath. ' + 'The bridge process may have died. Try reinitializing the sandbox.',
+            'Linux SOCKS bridge socket does not exist: $socksSocketPath. ' +
+                'The bridge process may have died. Try reinitializing the sandbox.',
           );
         }
 

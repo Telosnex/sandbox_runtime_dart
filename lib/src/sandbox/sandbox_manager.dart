@@ -282,7 +282,8 @@ WindowsProfileGrantResult? _windowsProfileReadRefresh;
 /** Something about the profile read grant that the user should be shown. */
 class WindowsProfileReadWarning {
   /** See {@link windowsProfileReadWarningsOf}. */
-  final String code; // 'profile_exclusion_unprotected' | 'profile_exclusion_unverifiable' | 'profile_stale_allow' | 'profile_file_replaced'
+  final String
+  code; // 'profile_exclusion_unprotected' | 'profile_exclusion_unverifiable' | 'profile_stale_allow' | 'profile_file_replaced'
   final String message;
   final List<WindowsProfileGrantItem> paths;
   const WindowsProfileReadWarning({
@@ -2668,9 +2669,9 @@ WindowsFsAccessSet _computeWindowsFsAccessSet(
     denyWrite: expand(fs.denyWrite, mode: 'deny'),
     credentialDeny: [
       ...expand(
-        _getCredentialDenyReadPaths(c.credentials)
-            .map<FilesystemPathEntry>(FilesystemPathSpelling.new)
-            .toList(),
+        _getCredentialDenyReadPaths(
+          c.credentials,
+        ).map<FilesystemPathEntry>(FilesystemPathSpelling.new).toList(),
         mode: 'deny',
       ),
       ...maskedFiles,
@@ -2721,9 +2722,9 @@ _RawWindowsFsInputs _rawWindowsFsInputs(SandboxRuntimeConfig c) {
     denyWrite: [...c.filesystem.denyWrite],
     allowRead: [...(c.filesystem.allowRead ?? const [])],
     allowWrite: [...c.filesystem.allowWrite],
-    credFiles: _getCredentialDenyReadPaths(c.credentials)
-        .map<FilesystemPathEntry>(FilesystemPathSpelling.new)
-        .toList(),
+    credFiles: _getCredentialDenyReadPaths(
+      c.credentials,
+    ).map<FilesystemPathEntry>(FilesystemPathSpelling.new).toList(),
   );
 }
 
@@ -3907,8 +3908,9 @@ Future<SandboxedProcess> _spawnSandboxed(
     // this point is still denied.
     perExecDenyRead = expandWindowsFsPaths([
       ...?fsCfg?.denyRead,
-      ..._getCredentialDenyReadPaths(customConfig?.credentials)
-          .map(FilesystemPathSpelling.new),
+      ..._getCredentialDenyReadPaths(
+        customConfig?.credentials,
+      ).map(FilesystemPathSpelling.new),
     ], mode: 'deny');
     perExecDenyWrite = expandWindowsFsPaths(
       fsCfg?.denyWrite ?? [],
