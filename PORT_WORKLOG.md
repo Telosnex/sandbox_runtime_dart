@@ -65,6 +65,20 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   git. A missing path stays denied, because a read-only path does not stop
   its creation. Telosnex may propose this upstream.
 
+- `SandboxManager.wrapWithSandbox` / `wrapWithSandboxArgv`: on macOS and
+  Linux, `PartialSandboxRuntimeConfig.omitDefaultWritablePaths` removes the
+  default writes to `/tmp/claude`, `/private/tmp/claude`, `~/.npm/_logs`, and
+  `~/.claude/debug` and suppresses the shared TMPDIR override. It retains
+  `/dev/stdout`, `/dev/stderr`, `/dev/null`, and `/dev/tty` for I/O and
+  `/dev/dtracehelper` and `/dev/autofs_nowait` for macOS runtime device
+  compatibility. Linux still uses bubblewrap's minimal `/dev`. The caller
+  can supply `temporaryDirectory`: an existing absolute directory granted
+  as a literal write path and exported as TMPDIR, with or without a proxy
+  or filesystem policy. The caller creates and removes it. Unspecified
+  options retain upstream behavior; Windows/MXC and the Linux session-level
+  violation monitor's policy approximation are unchanged. Telosnex may
+  propose this upstream.
+
 ## State (2026-10-13, after the test fidelity pass)
 
 `main` builds and passes from a clean clone on macOS (524 pass, 38 skip) and

@@ -89,6 +89,10 @@ class MacOSSandboxParams {
   bool? allowAppleEvents;
   String? binShell;
 
+  // TELOSNEX DEVIATION: Per-command TMPDIR and control of the legacy fallback.
+  String? temporaryDirectory;
+  bool? skipDefaultTmpdir;
+
   MacOSSandboxParams({
     required this.command,
     this.commandId,
@@ -115,6 +119,9 @@ class MacOSSandboxParams {
     this.enableWeakerNetworkIsolation,
     this.allowAppleEvents,
     this.binShell,
+    // TELOSNEX DEVIATION: Accept the command's choice from the manager.
+    this.temporaryDirectory,
+    this.skipDefaultTmpdir,
   });
 }
 
@@ -1395,6 +1402,8 @@ String wrapCommandWithSandboxMacOS(MacOSSandboxParams params) {
       params.enableWeakerNetworkIsolation ?? false;
   final allowAppleEvents = params.allowAppleEvents ?? false;
   final binShell = params.binShell;
+  // TELOSNEX DEVIATION: Use a private TMPDIR independent of proxying.
+  final temporaryDirectory = params.temporaryDirectory;
 
   // SBPL cannot redirect a read to different bytes, so whole-file masking
   // degrades to read-deny on macOS: the sandboxed process gets EPERM
@@ -1435,7 +1444,17 @@ String wrapCommandWithSandboxMacOS(MacOSSandboxParams params) {
       !hasWriteRestrictions &&
       !hasEnvRestrictions &&
       !hasGitConfig) {
-    return command;
+    // TELOSNEX DEVIATION: Set TMPDIR even for unrestricted commands, without
+    // imposing a sandbox that upstream would not have imposed.
+    return temporaryDirectory == null
+        ? command
+        : quote([
+            'env',
+            'TMPDIR=$temporaryDirectory',
+            binShell != null && binShell.isNotEmpty ? binShell : 'bash',
+            '-c',
+            command,
+          ]);
   }
 
   // Both correlation carriers (seatbelt log tag, proxy username) encode
@@ -1467,9 +1486,17 @@ String wrapCommandWithSandboxMacOS(MacOSSandboxParams params) {
     socksProxyPort,
     caCertPath,
     proxyAuthToken,
-    writeConfig == null,
+    // TELOSNEX DEVIATION: Don't set the legacy shared TMPDIR when opted out
+    // or when the command has its own temp directory.
+    writeConfig == null ||
+        params.skipDefaultTmpdir == true ||
+        temporaryDirectory != null,
     encodeSandboxedCommand(attributionCommand),
   );
+  // TELOSNEX DEVIATION: The explicit TMPDIR takes precedence over proxy defaults
+  // and credential env overlays, just as the upstream TMPDIR did.
+  if (temporaryDirectory != null)
+    proxyEnvArgs.add('TMPDIR=$temporaryDirectory');
   // JAVA_TOOL_OPTIONS carries two things for JVMs in the sandbox:
   //
   // - The proxy agent jar (see java-proxy-agent.ts): JVMs ignore the proxy
