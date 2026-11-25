@@ -85,12 +85,16 @@ class FsWriteRestrictionConfig {
   List<String>? literalAllowOnly;
   List<String> denyWithinAllow;
   List<String>? literalDenyWithinAllow;
+  // TELOSNEX DEVIATION: Keep the command's roots with its other write rules.
+  final List<String>? mandatoryDenyRoots;
 
   FsWriteRestrictionConfig({
     required this.allowOnly,
     this.literalAllowOnly,
     required this.denyWithinAllow,
     this.literalDenyWithinAllow,
+    // TELOSNEX DEVIATION: Carry the optional roots to the platform builder.
+    this.mandatoryDenyRoots,
   });
 }
 

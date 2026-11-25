@@ -65,6 +65,17 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   git. A missing path stays denied, because a read-only path does not stop
   its creation. Telosnex may propose this upstream.
 
+- `SandboxManager.wrapWithSandbox` / `wrapWithSandboxArgv`: upstream applies
+  its built-in write denies at the process cwd. On macOS and Linux,
+  `PartialSandboxRuntimeConfig.mandatoryDenyRoots` replaces that cwd with
+  the command's literal directory roots (`null` keeps upstream behavior;
+  `[]` adds no built-in denies). This is per-command filesystem policy, so
+  it goes in `customConfig` rather than launch options or the serialized
+  session config. It leaves the protected names, Seatbelt rules, Linux
+  ripgrep limits, placeholders and ancestor pins unchanged. The Linux
+  violation monitor still uses its session-level cwd approximation.
+  Telosnex may propose this upstream.
+
 ## State (2026-10-13, after the test fidelity pass)
 
 `main` builds and passes from a clean clone on macOS (524 pass, 38 skip) and

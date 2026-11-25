@@ -2914,6 +2914,13 @@ class PartialSandboxRuntimeConfig {
   final bool? allowAppleEvents;
   final config_types.RipgrepConfig? ripgrep;
   final int? mandatoryDenySearchDepth;
+
+  // TELOSNEX DEVIATION: A command can protect more than the process cwd.
+  /// Literal directories for the built-in write denies on macOS and Linux.
+  /// Relative paths are resolved against the process working directory.
+  /// With filesystem restrictions enabled, null keeps the process working
+  /// directory as the only root; an empty list applies no built-in denies.
+  final List<String>? mandatoryDenyRoots;
   final bool? allowPty;
   final bool? allowNestedUserNamespaces;
   final SeccompConfig? seccomp;
@@ -2933,6 +2940,8 @@ class PartialSandboxRuntimeConfig {
     this.allowAppleEvents,
     this.ripgrep,
     this.mandatoryDenySearchDepth,
+    // TELOSNEX DEVIATION: Accept explicit roots only in per-command policy.
+    this.mandatoryDenyRoots,
     this.allowPty,
     this.allowNestedUserNamespaces,
     this.seccomp,
@@ -3161,6 +3170,8 @@ Future<String> _wrapWithSandboxOnce(
       ),
       literalAllowOnly: writeLiterals['literalAllowOnly'],
       literalDenyWithinAllow: writeLiterals['literalDenyWithinAllow'],
+      // TELOSNEX DEVIATION: Carry the per-command roots with the write policy.
+      mandatoryDenyRoots: customConfig?.mandatoryDenyRoots,
     );
     // For a caller that never reads checkDependencies(), the CLI among them.
     if (!_ownInstallLogged) {

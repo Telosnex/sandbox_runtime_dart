@@ -510,8 +510,11 @@ String _dotGitKindAt(String dotGitPath) {
  * violation monitor, which needs the same denies to judge a write bwrap
  * refuses — reads the same definition rather than a copy of it.
  */
-List<String> linuxGetCwdMandatoryDenyPaths([bool allowGitConfig = false]) {
-  final cwd = process.cwd();
+// TELOSNEX DEVIATION: Reuse the cwd's static deny set at each explicit root.
+List<String> linuxGetCwdMandatoryDenyPaths([bool allowGitConfig = false]) =>
+    _linuxGetRootMandatoryDenyPaths(process.cwd(), allowGitConfig);
+
+List<String> _linuxGetRootMandatoryDenyPaths(String cwd, bool allowGitConfig) {
   // Note: Settings files are added at the callsite in sandbox-manager.ts
   final denyPaths = [
     // Dangerous files in CWD
@@ -609,15 +612,19 @@ Future<List<String>> _linuxGetMandatoryDenyPaths([
   int maxDepth = _DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   bool allowGitConfig = false,
   AbortSignal? abortSignal,
+  // TELOSNEX DEVIATION: Run the same scan at an explicit root when supplied.
+  String? root,
 ]) async {
   ripgrepConfig ??= RipgrepConfig(command: 'rg');
-  final cwd = process.cwd();
+  // TELOSNEX DEVIATION: Use the explicit root when provided, not the cwd.
+  final cwd = root ?? process.cwd();
   // Use provided signal or create a fallback controller
   final fallbackController = AbortController();
   final signal = abortSignal ?? fallbackController.signal;
   final dangerousDirectories = getDangerousDirectories();
 
-  final denyPaths = linuxGetCwdMandatoryDenyPaths(allowGitConfig);
+  // TELOSNEX DEVIATION: The static denies and the scan use the same root.
+  final denyPaths = _linuxGetRootMandatoryDenyPaths(cwd, allowGitConfig);
 
   // Build iglob args for all patterns in one ripgrep call
   final iglobArgs = <String>[];
@@ -2760,14 +2767,21 @@ Future<({List<String> args, int mandatoryDenyArgs})> _generateFilesystemArgs(
 
     // Deny writes within allowed paths (user-specified + mandatory denies)
     final configuredDenyPaths = writeConfig.denyWithinAllow;
+    // TELOSNEX DEVIATION: Resolve explicit roots as literal directories before
+    // scanning. They replace the cwd; each uses the same mount and pin plan.
+    final mandatoryDenyRoots = writeConfig.mandatoryDenyRoots
+        ?.map((root) => normalizePathForSandbox(root, literal: true))
+        .toSet();
     final denyPaths = [
       ...configuredDenyPaths,
-      ...(await _linuxGetMandatoryDenyPaths(
-        ripgrepConfig,
-        mandatoryDenySearchDepth,
-        allowGitConfig,
-        abortSignal,
-      )),
+      for (final root in mandatoryDenyRoots ?? const <String?>{null})
+        ...(await _linuxGetMandatoryDenyPaths(
+          ripgrepConfig,
+          mandatoryDenySearchDepth,
+          allowGitConfig,
+          abortSignal,
+          root,
+        )),
     ];
     // INVARIANT: one plan, one working directory. A relative entry is resolved
     // against it on both sides of the await above, the only one here.

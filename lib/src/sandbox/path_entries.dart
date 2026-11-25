@@ -471,5 +471,7 @@ FsWriteRestrictionConfig? writeNamesOf(FsWriteRestrictionConfig? config) {
       ...config.denyWithinAllow,
       ...(literalDenyWithinAllow ?? const <String>[]),
     ],
+    // TELOSNEX DEVIATION: Roots are already literal; keep them in Linux's fold.
+    mandatoryDenyRoots: config.mandatoryDenyRoots,
   );
 }

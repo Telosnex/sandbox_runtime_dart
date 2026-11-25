@@ -127,8 +127,15 @@ class MacOSSandboxParams {
 /// carries the cwd as its anchor — only the `**/<name>` tail is pattern.
 /// Compiled as one glob, a cwd like `a[b/c]d` would turn into a character
 /// class and every one of these denies would match nothing.
-List<PathEntry> macGetMandatoryDenyEntries([bool allowGitConfig = false]) {
-  final cwd = normalizePathForSandbox(process.cwd(), literal: true);
+// TELOSNEX DEVIATION: Reuse the cwd's rules at each explicit root.
+List<PathEntry> macGetMandatoryDenyEntries([bool allowGitConfig = false]) =>
+    _macGetRootMandatoryDenyEntries(process.cwd(), allowGitConfig);
+
+List<PathEntry> _macGetRootMandatoryDenyEntries(
+  String root,
+  bool allowGitConfig,
+) {
+  final cwd = normalizePathForSandbox(root, literal: true);
   final entries = <PathEntry>[];
   PathEntry literal(String relativePath) => _toLiteralPathEntry(
     path.normalize(
@@ -993,12 +1000,19 @@ List<String> _generateWriteRules(
   // Combine user-specified and mandatory deny patterns (no ripgrep needed on
   // macOS). The caller's spellings are patterns when they read as patterns;
   // the mandatory entries carry their own literal/glob split.
+  // TELOSNEX DEVIATION: Replace the cwd only when the command supplies roots.
+  final mandatoryDenyRoots = config.mandatoryDenyRoots;
   final denyEntries = <PathEntry>[
     ...(config.denyWithinAllow).map(_toPathEntry),
     ...(config.literalDenyWithinAllow ?? const <String>[]).map(
       _toLiteralPathEntry,
     ),
-    ...macGetMandatoryDenyEntries(allowGitConfig),
+    // TELOSNEX DEVIATION: Feed explicit-root entries into the same deny/pin rules.
+    if (mandatoryDenyRoots == null)
+      ...macGetMandatoryDenyEntries(allowGitConfig)
+    else
+      for (final root in mandatoryDenyRoots)
+        ..._macGetRootMandatoryDenyEntries(root, allowGitConfig),
   ];
   denyEntries.addAll(_alsoReadAs(config.denyWithinAllow, 'deny'));
   final grouped = _groupLiteralDenyPaths(denyEntries);
