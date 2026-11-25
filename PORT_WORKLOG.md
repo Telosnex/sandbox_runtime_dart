@@ -63,10 +63,18 @@ Each one is marked `TELOSNEX DEVIATION` in the code and has a test in
   just that command direct IP access without injecting proxy environment
   variables or starting Linux proxy relays. The filesystem and credential
   rules still apply, and inherited proxy variables are not stripped.
-  Omitted or false keeps upstream behavior. Linux retains upstream's
-  Unix-socket seccomp filter unless `allowAllUnixSockets` is enabled, and
-  retains the helper's filesystem protections. Windows (including MXC)
-  rejects true with `backend_unsupported`. Telosnex may propose this upstream.
+  Omitted or false keeps upstream behavior. On macOS, direct mode allows
+  unrestricted IP traffic and applies the same `allowUnixSockets` and
+  `allowAllUnixSockets` rules as proxy mode instead of allowing `network*`.
+  The only extra Unix endpoint is outbound to the exact
+  `/private/var/run/mDNSResponder` socket for system DNS resolution; it
+  gets no bind grant. Linux retains upstream's filesystem protections
+  and Unix-socket seccomp filter. Seccomp cannot filter by path, so Linux
+  ignores `allowUnixSockets` and `ssh-agent` is unavailable unless
+  `allowAllUnixSockets` disables the filter (also as upstream, the filter
+  is not applied if the seccomp helper is unavailable). Windows
+  (including MXC) rejects true with `backend_unsupported`. Telosnex may
+  propose this upstream.
 
 - `mxc_sandbox_utils.dart`, `buildMxcRequest`: upstream sends every
   `denyWrite` path as an MXC denied path, which also blocks reads. Here an

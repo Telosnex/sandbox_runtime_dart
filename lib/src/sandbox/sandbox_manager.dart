@@ -2967,8 +2967,9 @@ class PartialSandboxRuntimeConfig {
 
   // TELOSNEX DEVIATION: Opt out of the session proxy per command.
   /// Allow direct IP network access on macOS/Linux, without the SRT proxy.
-  /// Leaves filesystem policy and inherited environment in place. Linux
-  /// still blocks Unix sockets by default. Windows rejects true.
+  /// Leaves filesystem policy and inherited environment in place. Unix
+  /// sockets follow the proxy-mode policy, with a macOS DNS exception.
+  /// Windows rejects true.
   final bool? directNetwork;
 
   const PartialSandboxRuntimeConfig({
@@ -3414,6 +3415,8 @@ Future<String> _wrapWithSandboxOnce(
           command: command,
           commandId: commandId,
           needsNetworkRestriction: needsNetworkRestriction,
+          // TELOSNEX DEVIATION: Bypass IP restrictions, not Unix-socket policy.
+          directNetwork: directNetwork,
           // Only pass proxy ports if proxy is running (when there are domains to filter)
           httpProxyPort: needsNetworkProxy ? _getProxyPort() : null,
           socksProxyPort: needsNetworkProxy ? _getSocksProxyPort() : null,

@@ -65,6 +65,20 @@ void main() {
     late String blocked;
     late String secret;
 
+    SandboxRuntimeConfig sessionConfig([
+      NetworkConfig network = const NetworkConfig(
+        allowedDomains: [],
+        deniedDomains: [],
+      ),
+    ]) => SandboxRuntimeConfig(
+      network: network,
+      filesystem: FilesystemConfig(
+        allowWrite: [FilesystemPathLiteral(allowed)],
+        denyWrite: [],
+        denyRead: [FilesystemPathLiteral(secret)],
+      ),
+    );
+
     setUpAll(() async {
       fixtures = await Directory.systemTemp.createTemp('srt-direct-');
       final base = fixtures.resolveSymbolicLinksSync();
@@ -72,17 +86,7 @@ void main() {
       blocked = path.join(base, 'blocked.txt');
       secret = path.join(base, 'secret.txt');
       File(secret).writeAsStringSync('private');
-      await SandboxManager.initialize(
-        SandboxRuntimeConfig(
-          network: const NetworkConfig(allowedDomains: [], deniedDomains: []),
-          filesystem: FilesystemConfig(
-            allowWrite: [FilesystemPathLiteral(allowed)],
-            denyWrite: [],
-            denyRead: [FilesystemPathLiteral(secret)],
-          ),
-        ),
-        (_) async => false,
-      );
+      await SandboxManager.initialize(sessionConfig(), (_) async => false);
       expect(SandboxManager.getProxyPort(), isNotNull);
     });
 
@@ -189,6 +193,78 @@ void main() {
       final result = await run(quote([curl, ...args]), true);
       expect(result.exitCode, 0, reason: '${result.stderr}');
     });
+
+    test(
+      'direct mode can resolve an external hostname via the macOS resolver',
+      () async {
+        const resolver = '/usr/bin/dscacheutil';
+        const args = ['-q', 'host', '-a', 'name', 'example.com'];
+        final address = RegExp(r'^ip(?:v6)?_address: ', multiLine: true);
+        final host = await Process.run(resolver, args);
+        if (host.exitCode != 0 || !address.hasMatch(host.stdout as String)) {
+          markTestSkipped('Host cannot resolve example.com: ${host.stderr}');
+          return;
+        }
+        final result = await run(quote([resolver, ...args]), true);
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+        expect(result.stdout, matches(address));
+      },
+      skip: Platform.isMacOS ? false : 'requires the macOS resolver',
+    );
+
+    // TELOSNEX DEVIATION: Direct IP must not imply Unix-socket access.
+    for (final mode in ['default', 'unrelated', 'specific', 'all']) {
+      test('direct mode respects macOS Unix-socket policy ($mode)', () async {
+        // The socket is outside the sandbox's filesystem allow list.
+        final base = fixtures.resolveSymbolicLinksSync();
+        final socketPath = path.join(base, 'peer.sock');
+        final listener = await ServerSocket.bind(
+          InternetAddress(socketPath, type: InternetAddressType.unix),
+          0,
+        );
+        addTearDown(listener.close);
+        const marker = 'host Unix peer reached';
+        listener.listen((client) async {
+          client.writeln(marker);
+          await client.close();
+        });
+
+        const nc = '/usr/bin/nc';
+        final args = ['-d', '-w', '2', '-U', socketPath];
+        final host = await Process.run(nc, args);
+        expect(host.exitCode, 0, reason: '${host.stderr}');
+        expect(host.stdout, contains(marker));
+
+        SandboxManager.updateConfig(
+          sessionConfig(
+            NetworkConfig(
+              allowedDomains: [],
+              deniedDomains: [],
+              allowUnixSockets: switch (mode) {
+                'specific' => [socketPath],
+                'unrelated' => [path.join(base, 'other.sock')],
+                _ => null,
+              },
+              allowAllUnixSockets: mode == 'all' ? true : null,
+            ),
+          ),
+        );
+        addTearDown(() => SandboxManager.updateConfig(sessionConfig()));
+
+        final result = await run(quote([nc, ...args]), true);
+        if (mode == 'specific' || mode == 'all') {
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+          expect(result.stdout, contains(marker));
+        } else {
+          expect(
+            result.exitCode,
+            1,
+            reason: '${result.stdout}\n${result.stderr}',
+          );
+          expect(result.stdout, isNot(contains(marker)));
+        }
+      }, skip: Platform.isMacOS ? false : 'requires macOS Seatbelt');
+    }
 
     test(
       'keeps the upstream Linux Unix-socket filter',

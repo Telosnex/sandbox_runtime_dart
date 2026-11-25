@@ -38,6 +38,8 @@ class MacOSSandboxParams {
   ///
   String? commandId;
   bool needsNetworkRestriction;
+  // TELOSNEX DEVIATION: Direct IP access still enforces Unix-socket policy.
+  bool directNetwork;
   int? httpProxyPort;
   int? socksProxyPort;
 
@@ -97,6 +99,8 @@ class MacOSSandboxParams {
     required this.command,
     this.commandId,
     required this.needsNetworkRestriction,
+    // TELOSNEX DEVIATION: Keep direct IP distinct from unrestricted networking.
+    this.directNetwork = false,
     this.httpProxyPort,
     this.socksProxyPort,
     this.proxyAuthToken,
@@ -1065,6 +1069,8 @@ String _generateSandboxProfile({
   int? httpProxyPort,
   int? socksProxyPort,
   required bool needsNetworkRestriction,
+  // TELOSNEX DEVIATION: Keep Unix-socket rules when opting out of the proxy.
+  required bool directNetwork,
   List<String>? allowUnixSockets,
   bool? allowAllUnixSockets,
   bool? allowLocalBinding,
@@ -1245,7 +1251,8 @@ String _generateSandboxProfile({
 
   // Network rules
   profile.add('; Network');
-  if (!needsNetworkRestriction) {
+  // TELOSNEX DEVIATION: Only the upstream unrestricted mode allows network*.
+  if (!needsNetworkRestriction && !directNetwork) {
     profile.add('(allow network*)');
   } else {
     // Allow local binding if requested.
@@ -1268,7 +1275,17 @@ String _generateSandboxProfile({
     // "localhost:*") matches connect() to 127.0.0.1 and ::1 but not
     // ::ffff:127.0.0.1; runtimes that connect to loopback via dual-stack
     // sockets need to use AF_INET (see JAVA_TOOL_OPTIONS injection below).
-    if (allowLocalBinding == true) {
+    // TELOSNEX DEVIATION: Permit IP endpoints, not Unix socket paths.
+    if (directNetwork) {
+      profile.add('(allow network-bind (local ip "*:*"))');
+      profile.add('(allow network-inbound (local ip "*:*"))');
+      profile.add('(allow network-outbound (remote ip "*:*"))');
+      // macOS's system resolver connects to mDNSResponder over Unix IPC.
+      // Match that endpoint exactly, outbound only; no extra bind grant.
+      profile.add(
+        '(allow network-outbound (remote unix-socket (literal "/private/var/run/mDNSResponder")))',
+      );
+    } else if (allowLocalBinding == true) {
       profile.add('(allow network-bind (local ip "*:*"))');
       profile.add('(allow network-inbound (local ip "*:*"))');
       profile.add('(allow network-outbound (remote ip "localhost:*"))');
@@ -1304,6 +1321,7 @@ String _generateSandboxProfile({
       }
     }
     // If both allowAllUnixSockets and allowUnixSockets are false/undefined/empty, Unix sockets are blocked by default
+    // TELOSNEX DEVIATION: Direct IP mode allows only the DNS exception above by default.
     // Allow localhost TCP operations for the HTTP proxy
     if (httpProxyPort != null) {
       profile.add('(allow network-bind (local ip "localhost:$httpProxyPort"))');
@@ -1453,7 +1471,9 @@ String wrapCommandWithSandboxMacOS(MacOSSandboxParams params) {
       (setEnvVars != null && setEnvVars.isNotEmpty);
   final hasGitConfig = (gitSafeDirectories?.length ?? 0) > 0;
   // No sandboxing needed
+  // TELOSNEX DEVIATION: Explicit direct IP mode still applies Unix-socket rules.
   if (!needsNetworkRestriction &&
+      !params.directNetwork &&
       !hasReadRestrictions &&
       !hasWriteRestrictions &&
       !hasEnvRestrictions &&
@@ -1483,6 +1503,8 @@ String wrapCommandWithSandboxMacOS(MacOSSandboxParams params) {
     httpProxyPort: httpProxyPort,
     socksProxyPort: socksProxyPort,
     needsNetworkRestriction: needsNetworkRestriction,
+    // TELOSNEX DEVIATION: Pass through direct IP mode to the profile.
+    directNetwork: params.directNetwork,
     allowUnixSockets: allowUnixSockets,
     allowAllUnixSockets: allowAllUnixSockets,
     allowLocalBinding: allowLocalBinding,
