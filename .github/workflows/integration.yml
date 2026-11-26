@@ -39,7 +39,7 @@ jobs:
           ref: 0bbebed0aa9a8e628dc4df8bc30293550a1988eb
           path: .upstream
           persist-credentials: false
-      - uses: Telosnex/telosnex_ci_tools/actions/setup-flutter@0ab334b66d7bb8ff0f436b8e9739eb014ab35b79 # v0.5.24
+      - uses: Telosnex/telosnex_ci_tools/actions/setup-flutter@2b3e8c2aeffd68d7aeb371c35e58699357aefffc # v0.5.25
       - name: Linux sandbox prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -87,7 +87,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: Telosnex/telosnex_ci_tools/actions/setup-flutter@0ab334b66d7bb8ff0f436b8e9739eb014ab35b79 # v0.5.24
+      - uses: Telosnex/telosnex_ci_tools/actions/setup-flutter@2b3e8c2aeffd68d7aeb371c35e58699357aefffc # v0.5.25
       - run: dart pub get
       # Real MXC integration belongs to the embedding application.
       - run: dart test test/config_to_json_test.dart test/config_validation_test.dart test/public_exports_test.dart test/sandbox/mxc_config_test.dart test/sandbox/mxc_test.dart -r expanded
