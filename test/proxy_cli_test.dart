@@ -65,10 +65,22 @@ Proc run(List<String> args, [Map<String, String>? env]) {
     },
   );
   var stderr = '';
-  child.stderr!.listen((d) => stderr += utf8.decode(d, allowMalformed: true));
+  // TELOSNEX DEVIATION: 'exit' can come before the last stderr bytes are
+  // read. Wait for the end of stderr too, so that a test sees all of it.
+  final stderrDone = Completer<void>();
+  child.stderr!.listen(
+    (d) => stderr += utf8.decode(d, allowMalformed: true),
+    onDone: stderrDone.complete,
+  );
   final exitedCompleter = Completer<int?>();
   child.once('exit', (code, _) {
-    if (!exitedCompleter.isCompleted) exitedCompleter.complete(code as int?);
+    unawaited(
+      stderrDone.future.then((_) {
+        if (!exitedCompleter.isCompleted) {
+          exitedCompleter.complete(code as int?);
+        }
+      }),
+    );
   });
   return (child: child, exited: exitedCompleter.future, stderr: () => stderr);
 }
@@ -367,14 +379,22 @@ Future<void> main() async {
             });
             listener.close();
             var stderr = '';
+            // TELOSNEX DEVIATION: wait for the end of stderr as well as
+            // 'exit', as in run().
+            final stderrDone = Completer<void>();
             child.stderr!.listen(
               (d) => stderr += utf8.decode(d, allowMalformed: true),
+              onDone: stderrDone.complete,
             );
             final exitedCompleter = Completer<int?>();
             child.once('exit', (code, _) {
-              if (!exitedCompleter.isCompleted) {
-                exitedCompleter.complete(code as int?);
-              }
+              unawaited(
+                stderrDone.future.then((_) {
+                  if (!exitedCompleter.isCompleted) {
+                    exitedCompleter.complete(code as int?);
+                  }
+                }),
+              );
             });
             final exited = exitedCompleter.future;
             // The extra stdio entries are the parent's ends of socket pairs.
